@@ -14,12 +14,12 @@ const config = {
     model: "confluence-ai",
     // Allow different confidence thresholds per impact level
     confidenceThresholds: {
-      "High": 0.8,
-      "Medium": 0.7,
-      "Low": 0.6
+      "High": 0.9,
+      "Medium": 0.75,
+      "Low": 0.5
     },
     // Fallback used if impact level not found
-    defaultThreshold: 0.6
+    defaultThreshold: 0.5
   }
 };
 
