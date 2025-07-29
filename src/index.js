@@ -37,7 +37,11 @@ const extractPageId = (event, context) => {
         return match ? match[1] : null;
       }
       return null;
-    }).filter(Boolean)
+    }).filter(Boolean),
+
+    // Possible explicit URL fields
+    event?.input?.url,
+    event?.url,
   ];
   
   // Find first valid pageId
@@ -54,6 +58,44 @@ const extractPageId = (event, context) => {
   
   console.log('✗ No valid pageId found');
   return null;
+};
+
+// ---------------------------------------------------------------------------
+// Fallback: query Confluence to auto‑detect a pageId by title if extraction fails
+// ---------------------------------------------------------------------------
+const autoDetectPageIdByTitle = async (title, apiInstance, runId) => {
+  if (!title) return null;
+
+  try {
+    console.log(`[${runId}] Attempting auto‑detection via search: "${title}"`);
+    // Use CQL search (v2) to find pages whose title matches exactly
+    const searchResponse = await apiInstance.requestConfluence(
+      route`/wiki/api/v2/search?cql=type=page AND title~"${encodeURIComponent(title)}"&limit=1`
+    );
+
+    if (!searchResponse.ok) {
+      console.warn(
+        `[${runId}] Search request failed: ${searchResponse.status}`
+      );
+      return null;
+    }
+
+    const searchResults = await searchResponse.json();
+    const result = searchResults?.results?.[0];
+
+    if (result?.content?.id) {
+      console.log(
+        `[${runId}] Auto‑detected pageId ${result.content.id} from search`
+      );
+      return String(result.content.id);
+    }
+
+    console.log(`[${runId}] No matching pages found via search`);
+    return null;
+  } catch (err) {
+    console.warn(`[${runId}] Auto‑detect failed: ${err.message}`);
+    return null;
+  }
 };
 
 // Robust table cell manipulation with proper DOM handling
@@ -154,24 +196,41 @@ export async function main(event, context) {
     console.log(`[${runId}] === PM FEEDBACK AGENT START ===`);
     
     // ROBUST pageId extraction with comprehensive debugging
-    const pageId = extractPageId(event, context);
+    let pageId = extractPageId(event, context);
     
     if (!pageId) {
-      console.error(`[${runId}] CRITICAL: No pageId found in event or context`);
-      console.error(`[${runId}] Available event keys: ${Object.keys(event || {})}`);
-      console.error(`[${runId}] Available context keys: ${Object.keys(context || {})}`);
-      
-      return { 
-        statusCode: 400, 
-        body: { 
-          error: 'pageId is required but not found in request',
-          debug: {
-            eventKeys: Object.keys(event || {}),
-            contextKeys: Object.keys(context || {}),
-            runId
+      console.log(
+        `[${runId}] extractPageId failed – attempting server‑side auto‑detection`
+      );
+
+      // Try to derive the pageId from the page title via search
+      const fallbackPageId = await autoDetectPageIdByTitle(
+        context?.content?.title,
+        api.asApp(),
+        runId
+      );
+
+      if (fallbackPageId) {
+        console.log(
+          `[${runId}] Fallback succeeded; using auto‑detected pageId ${fallbackPageId}`
+        );
+        pageId = fallbackPageId;
+      } else {
+        console.error(
+          `[${runId}] CRITICAL: Unable to determine pageId automatically`
+        );
+        return {
+          statusCode: 400,
+          body: {
+            error: 'pageId is required but could not be determined automatically',
+            debug: {
+              eventKeys: Object.keys(event || {}),
+              contextKeys: Object.keys(context || {}),
+              runId
+            }
           }
-        } 
-      };
+        };
+      }
     }
     
     console.log(`[${runId}] Successfully extracted pageId: ${pageId}`);
