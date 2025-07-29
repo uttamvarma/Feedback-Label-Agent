@@ -1,12 +1,12 @@
 const config = {
   labelTaxonomy: {
     themes: [
-      "Feature Request",
-      "Bug Report", 
-      "Usability",
-      "Performance",
-      "Integration",
-      "Other"
+      "Functionality",
+      "Workflow", 
+      "Stability",
+      "Guidance",
+      "Provisioning",
+      "Compliance"
     ],
     impactLevels: ["High", "Medium", "Low"]
   },
@@ -19,7 +19,7 @@ const config = {
       "Low": 0.6
     },
     // Fallback used if impact level not found
-    defaultThreshold: 0.7
+    defaultThreshold: 0.6
   }
 };
 
