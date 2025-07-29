@@ -16,10 +16,10 @@ const config = {
     confidenceThresholds: {
       "High": 0.9,
       "Medium": 0.75,
-      "Low": 0.5
+      "Low": 0.6
     },
     // Fallback used if impact level not found
-    defaultThreshold: 0.5
+    defaultThreshold: 0.6
   }
 };
 
