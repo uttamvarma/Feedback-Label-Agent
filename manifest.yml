@@ -5,47 +5,95 @@ app:
 
 modules:
   rovo:agent:
-    - key: pm-feedback-agent
-      name: PM Feedback Agent
-      description: Applies Theme and Impact labels to customer feedback table
+    - key: feedback-classifier-agent
+      name: "Customer Feedback Classifier"
+      description: "Classifies Confluence feedback rows and fills Theme/Impact without overwriting existing labels."
       prompt: |
-        This agent classifies customer feedback rows by applying predefined "Theme" and "Impact" labels.
+        You are an Atlassian Rovo Agent working on a Confluence page.
+        GOAL: Classify table rows of customer feedback and update the table with Theme and Impact.
+        CONTEXT:
+        - First call action "extract-feedback-table". It returns:
+          {
+            "contentId": "<id>",
+            "tableMeta": {
+              "hasTheme": <bool>, "hasImpact": <bool>,
+              "subjectCol": <int>, "descriptionCol": <int>,
+              "themeCol": <int|null>, "impactCol": <int|null>
+            },
+            "rowsForClassification": [
+              { "rowIndex": <int>, "subject": "<text>", "description": "<text>" }
+            ]
+          }
+          Only rows with BOTH Theme and Impact empty are included, capped at 20.
+        TAXONOMY (STRICT):
+        - Theme: "Feature Request" | "Integration" | "Bug" | "Query" | "Other".
+        - Impact: "High" | "Medium" | "Low".
+        CONFIDENCE & THRESHOLDS:
+        - Provide a confidence in [0,1] for theme and impact.
+        - Impact buckets by confidence: High ≥ 0.90; Medium ≥ 0.75; Low ≥ 0.50. If all < 0.50, set Impact="Low".
+        - If all theme confidences < 0.50, set Theme="Other".
+        TIE-BREAKS:
+        - Theme tie order: Bug > Feature Request > Integration > Query > Other.
+        - Impact tie order: High > Medium > Low.
+        OUTPUT (STRICT JSON, no markdown):
+        {
+          "contentId": "<id>",
+          "updates": [
+            {
+              "rowIndex": <int>,
+              "theme": "<Theme>",
+              "themeConfidence": <number>,
+              "impact": "<Impact>",
+              "impactConfidence": <number>
+            }
+          ]
+        }
+        Next, call action "apply-feedback-labels" with this JSON as "updatesJson".
+        RULES:
+        - Never invent rows; never overwrite non-empty Theme/Impact.
+        - If "extract-feedback-table" reported "Table not found", return that message.
+
       conversationStarters:
-        - Label feedback on this page
+        - "Classify feedback on this page"
+        - "Label first 20 empty rows (Theme & Impact)"
       actions:
-        - label-feedback
+        - extract-feedback-table
+        - apply-feedback-labels
 
   action:
-    - key: label-feedback
-      name: Label Feedback
-      function: feedback-fn
-      actionVerb: UPDATE
-      contexts: [ 'confluence:page' ]
-      description: >
-        Parses the current page's first table, calls Atlassian AI to classify
-        each feedback row with Theme and Impact, and updates the page in place.
+    - key: extract-feedback-table
+      name: "Extract feedback table from current page"
+      function: fn-extract
+      actionVerb: GET
+      description: "Reads current page (REST v2, storage body), finds first table with Subject & Description (case-insensitive), returns up to 20 unlabeled rows."
       inputs:
-        pageId:
-          title: Page to Label
+        rowsLimit:
+          title: "Rows limit (max 20)"
+          type: integer
+          required: false
+          description: "Maximum number of unlabeled rows to classify (capped at 20)."
+
+    - key: apply-feedback-labels
+      name: "Apply Theme/Impact labels"
+      function: fn-apply
+      actionVerb: UPDATE
+      description: "Adds missing Theme/Impact columns if needed and writes labels into empty cells only; never overwrites."
+      inputs:
+        updatesJson:
+          title: "Updates JSON"
           type: string
           required: true
-          description: Select the Confluence page containing the feedback table.
+          description: "Strict JSON: { contentId, updates: [{rowIndex, theme, themeConfidence, impact, impactConfidence}] }"
 
   function:
-    - key: feedback-fn
-      handler: index.main
+    - key: fn-extract
+      handler: index.extractFeedbackTable
+    - key: fn-apply
+      handler: index.applyFeedbackLabels
 
 permissions:
   scopes:
-    - read:confluence-content.all
-    - read:page:confluence
-    - write:confluence-content
-    - write:page:confluence
-    - write:comment:confluence
-    - read:confluence-space.summary
-    - read:confluence-props
-    - write:confluence-props
-  external:
-    fetch:
-      backend:
-        - address: api.atlassian.com
+    - read:page:confluence     # REST v2 GET page with body-format=storage
+    - write:page:confluence    # REST v2 PUT page storage body
+    - read:chat:rovo           # expose actions to Rovo chat / customer agents
+    - storage:app              # structured critical-failure logs
