@@ -3,93 +3,75 @@ app:
   runtime:
     name: nodejs22.x
 
+
 modules:
   rovo:agent:
-    - key: feedback-classifier-agent
-      name: "Customer Feedback Classifier"
-      description: "Classifies Confluence feedback rows and fills Theme/Impact without overwriting existing labels."
+    - key: feedback-labeller-agent
+      name: "Feedback Labeller"
+      description: "Classifies customer feedback rows on the current Confluence page into Theme & Impact and writes results back to the table."
       prompt: |
-        You are an Atlassian Rovo Agent working on a Confluence page.
-        GOAL: Classify table rows of customer feedback and update the table with Theme and Impact.
-        CONTEXT:
-        - First call action "extract-feedback-table". It returns:
-          {
-            "contentId": "<id>",
-            "tableMeta": {
-              "hasTheme": <bool>, "hasImpact": <bool>,
-              "subjectCol": <int>, "descriptionCol": <int>,
-              "themeCol": <int|null>, "impactCol": <int|null>
-            },
-            "rowsForClassification": [
-              { "rowIndex": <int>, "subject": "<text>", "description": "<text>" }
-            ]
-          }
-          Only rows with BOTH Theme and Impact empty are included, capped at 20.
-        TAXONOMY (STRICT):
-        - Theme: "Feature Request" | "Integration" | "Bug" | "Query" | "Other".
-        - Impact: "High" | "Medium" | "Low".
-        CONFIDENCE & THRESHOLDS:
-        - Provide a confidence in [0,1] for theme and impact.
-        - Impact buckets by confidence: High ≥ 0.90; Medium ≥ 0.75; Low ≥ 0.50. If all < 0.50, set Impact="Low".
-        - If all theme confidences < 0.50, set Theme="Other".
-        TIE-BREAKS:
-        - Theme tie order: Bug > Feature Request > Integration > Query > Other.
-        - Impact tie order: High > Medium > Low.
-        OUTPUT (STRICT JSON, no markdown):
-        {
-          "contentId": "<id>",
-          "updates": [
-            {
-              "rowIndex": <int>,
-              "theme": "<Theme>",
-              "themeConfidence": <number>,
-              "impact": "<Impact>",
-              "impactConfidence": <number>
-            }
-          ]
-        }
-        Next, call action "apply-feedback-labels" with this JSON as "updatesJson".
-        RULES:
-        - Never invent rows; never overwrite non-empty Theme/Impact.
-        - If "extract-feedback-table" reported "Table not found", return that message.
+        You are an Atlassian Rovo Agent that labels customer feedback in a Confluence table.
+        STRICT TAXONOMY:
+          THEME must be one of: "Feature Request", "Integration", "Bug", "Query", "Other".
+          IMPACT must be one of: "High", "Medium", "Low".
+        Capitalization is not important in the source data.
+
+        CONTEXT: You will be invoked from a Confluence page. Use the page context to operate on that page only. Do not ask for IDs.
+
+        WORKFLOW:
+        1) Invoke action "get-next-rows" with batchSize=20 (or a smaller number if fewer rows remain). It returns the first feedback table, column indexes, and up to 20 rows where THEME or IMPACT is currently empty. Each row includes rowIndex (0-based, header excluded), subject, description.
+        2) For each row, read subject and description and decide THEME and IMPACT using STRICT TAXONOMY. If you are uncertain, choose the closest category; prefer "Other" only when no category fits.
+        3) Invoke action "apply-labels" with a JSON string `labels` containing an array of objects: { rowIndex, theme, impact } where `theme` and `impact` exactly match the STRICT TAXONOMY strings above.
+        4) If there are still empty rows remaining, repeat until all are labeled. Keep responses concise; report count updated.
+
+        QUALITY:
+        - Be deterministic and consistent. Use patterns: requests for new functionality → Feature Request; external system/API/app mentions → Integration; defects/errors → Bug; how‑to or information requests → Query; else → Other. Impact reflects customer urgency/business risk: critical blockers/data loss/security → High; meaningful but not blocking → Medium; minor or cosmetic → Low.
 
       conversationStarters:
-        - "Classify feedback on this page"
-        - "Label first 20 empty rows (Theme & Impact)"
+        - "Label the next 20 feedback rows on this page"
+        - "Re-scan this page for any unlabeled feedback and label them"
       actions:
-        - extract-feedback-table
-        - apply-feedback-labels
+        - get-next-rows
+        - apply-labels
 
   action:
-    - key: extract-feedback-table
-      name: "Extract feedback table from current page"
-      function: fn-extract
+    - key: get-next-rows
+      name: "Get next unlabeled feedback rows"
+      function: getNextRows
       actionVerb: GET
-      description: "Reads current page (REST v2, storage body), finds first table with Subject & Description (case-insensitive), returns up to 20 unlabeled rows."
+      description: "Returns up to N (default 20) unlabeled rows (Theme/Impact empty) from the first feedback table on the current Confluence page."
       inputs:
-        rowsLimit:
-          title: "Rows limit (max 20)"
+        batchSize:
+          title: "Batch size"
           type: integer
           required: false
-          description: "Maximum number of unlabeled rows to classify (capped at 20)."
+          description: "How many rows to fetch (max 20)."
 
-    - key: apply-feedback-labels
+    - key: apply-labels
       name: "Apply Theme/Impact labels"
-      function: fn-apply
+      function: applyLabels
       actionVerb: UPDATE
-      description: "Adds missing Theme/Impact columns if needed and writes labels into empty cells only; never overwrites."
+      description: "Writes LLM-chosen Theme & Impact values back into the feedback table for the specified row indexes."
       inputs:
-        updatesJson:
-          title: "Updates JSON"
+        labels:
+          title: "Row labels payload (JSON string)"
           type: string
           required: true
-          description: "Strict JSON: { contentId, updates: [{rowIndex, theme, themeConfidence, impact, impactConfidence}] }"
+          description: "JSON string of array items: { rowIndex, theme, impact } with exact taxonomy values."
+
+  confluence:contentBylineItem:
+    - key: feedback-labeller-byline
+      title: "Label next 20 rows"
+      function: bylineResolver
 
   function:
-    - key: fn-extract
-      handler: index.extractFeedbackTable
-    - key: fn-apply
-      handler: index.applyFeedbackLabels
+    - key: getNextRows
+      handler: index.getNextRows
+    - key: applyLabels
+      handler: index.applyLabels
+    - key: bylineResolver
+      handler: index.bylineDynamic
+
 
 permissions:
   scopes:
