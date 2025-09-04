@@ -6,7 +6,6 @@
   "private": true,
   "license": "MIT",
   "dependencies": {
-    "@forge/api": "^6.0.0",
-    "node-html-parser": "^7.0.1"
+    "@forge/api": "^6.0.0"
   }
 }

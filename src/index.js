@@ -153,22 +153,8 @@ async function putPageADF(pageId, title, versionNumber, adf) {
   }
 }
 
-// ---------- Normalizers (safety: ensure strict taxonomy values) ----------
-const normalizeTheme = (input) => {
-  const v = (input || "").trim().toLowerCase();
-  if (["feature", "feature request", "fr", "enhancement", "req"].includes(v)) return "Feature Request";
-  if (["integration", "integrations", "connector", "plugin"].includes(v)) return "Integration";
-  if (["bug", "defect", "issue", "error"].includes(v)) return "Bug";
-  if (["query", "question", "howto", "how-to", "help"].includes(v)) return "Query";
-  return "Other";
-};
 
-const normalizeImpact = (input) => {
-  const v = (input || "").trim().toLowerCase();
-  if (["high", "blocker", "critical", "p0", "urgent"].includes(v)) return "High";
-  if (["medium", "moderate", "p1"].includes(v)) return "Medium";
-  return "Low"; // default fallback
-};
+// (No direct AI calls from server-side; classification is done by the Agent.)
 
 // ---------- Rovo Actions ----------
 async function getNextRows(payload, context) {
@@ -200,13 +186,17 @@ async function getNextRows(payload, context) {
 
   const table = selected.node;
   const rows = (table.content || []).slice(1); // exclude header
+
   const unlabeled = [];
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i];
     const hasTheme = !!cellText(r, header.themeCol);
     const hasImpact = !!cellText(r, header.impactCol);
     if (!hasTheme || !hasImpact) {
-      unlabeled.push({ rowIndex: i, subject: cellText(r, header.subjectCol), description: cellText(r, header.descriptionCol) });
+      const subject = cellText(r, header.subjectCol);
+      const description = cellText(r, header.descriptionCol);
+      // Return only unlabeled rows; the Agent (LLM) will classify
+      unlabeled.push({ rowIndex: i, subject, description });
       if (unlabeled.length >= batchSize) break;
     }
   }
@@ -261,16 +251,24 @@ async function applyLabels(payload, context) {
   const dataRows = (table.content || []).slice(1);
   let updated = 0;
 
+
+  const ci = (v) => (v || "").toString().trim().toLowerCase();
+
   for (const item of items) {
     const idx = item.rowIndex;
     if (typeof idx !== "number" || idx < 0 || idx >= dataRows.length) continue;
 
     const row = dataRows[idx];
-    const theme = normalizeTheme(item.theme);
-    const impact = normalizeImpact(item.impact);
+    // Normalize to strict taxonomy (case-insensitive); skip invalids
+    const themeMatch = THEMES.find((t) => t.toLowerCase() === ci(item.theme));
+    const impactMatch = IMPACTS.find((i) => i.toLowerCase() === ci(item.impact));
+    if (!themeMatch || !impactMatch) {
+      log("WARN", "Skipping row due to invalid taxonomy", { rowIndex: idx, theme: item.theme, impact: item.impact });
+      continue;
+    }
 
-    if (!cellText(row, header.themeCol)) { setCellText(row, header.themeCol, theme); updated++; }
-    if (!cellText(row, header.impactCol)) { setCellText(row, header.impactCol, impact); updated++; }
+    if (!cellText(row, header.themeCol)) { setCellText(row, header.themeCol, themeMatch); updated++; }
+    if (!cellText(row, header.impactCol)) { setCellText(row, header.impactCol, impactMatch); updated++; }
   }
 
   setAtPath(adf, selected.path, table);
