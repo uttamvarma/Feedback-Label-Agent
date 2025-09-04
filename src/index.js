@@ -153,22 +153,7 @@ async function putPageADF(pageId, title, versionNumber, adf) {
   }
 }
 
-// ---------- Normalizers (safety: ensure strict taxonomy values) ----------
-const normalizeTheme = (input) => {
-  const v = (input || "").trim().toLowerCase();
-  if (["feature", "feature request", "fr", "enhancement", "req"].includes(v)) return "Feature Request";
-  if (["integration", "integrations", "connector", "plugin"].includes(v)) return "Integration";
-  if (["bug", "defect", "issue", "error"].includes(v)) return "Bug";
-  if (["query", "question", "howto", "how-to", "help"].includes(v)) return "Query";
-  return "Other";
-};
-
-const normalizeImpact = (input) => {
-  const v = (input || "").trim().toLowerCase();
-  if (["high", "blocker", "critical", "p0", "urgent"].includes(v)) return "High";
-  if (["medium", "moderate", "p1"].includes(v)) return "Medium";
-  return "Low"; // default fallback
-};
+// ---------- Normalizers removed: use LLM-provided values as-is ----------
 
 // ---------- Rovo Actions ----------
 async function getNextRows(payload, context) {
@@ -266,8 +251,8 @@ async function applyLabels(payload, context) {
     if (typeof idx !== "number" || idx < 0 || idx >= dataRows.length) continue;
 
     const row = dataRows[idx];
-    const theme = normalizeTheme(item.theme);
-    const impact = normalizeImpact(item.impact);
+    const theme = item.theme;
+    const impact = item.impact;
 
     if (!cellText(row, header.themeCol)) { setCellText(row, header.themeCol, theme); updated++; }
     if (!cellText(row, header.impactCol)) { setCellText(row, header.impactCol, impact); updated++; }
