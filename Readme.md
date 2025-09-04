@@ -1,56 +1,54 @@
-### Feedback Classifier Rovo Agent
+### Feedback Labeller (Rovo Agent)
 
 ---
 
 #### Overview
 
-This Forge app adds a **Rovo Agent** to Confluence Cloud that automatically:
+This Forge app adds a Rovo Agent to Confluence Cloud that:
 
-1. Detects the first Confluence table whose first-row headers include **Subject** & **Description**.
-2. Collects up to **20 rows** where the **Theme** and **Impact** columns are empty.
-3. Sends the row text to Atlassian Intelligence (built into Rovo) to classify:
+1) Finds the first table whose header row includes Subject and Description.
+2) Ensures Theme and Impact columns exist (adds them if missing).
+3) Returns up to 20 rows where Theme or Impact is empty.
+4) Uses the LLM (via the Rovo Agent) to decide Theme and Impact strictly from the taxonomy:
+   - Theme: Feature Request · Integration · Bug · Query · Other
+   - Impact: High · Medium · Low
+5) Writes the LLM’s chosen values back into empty cells only (no overwrites).
 
-   * **Theme:** *Feature Request · Integration · Bug · Query · Other*
-   * **Impact:** *High (≥ 0.90) · Medium (≥ 0.75) · Low (≥ 0.50, default)*
-4. Adds missing Theme/Impact columns (header + empty cells) if necessary.
-5. Fills only the previously-empty Theme / Impact cells—existing data are never overwritten.
+Important: There is no keyword fallback or normalization in code. The app preserves exactly what the LLM returns.
 
-The app works natively on **atlas\_doc\_format (ADF)**, so it is future-proof and requires no HTML parsing libraries.
+The app works with atlas_doc_format (ADF) directly; no HTML parsing is used.
 
 ---
 
 #### How it works
 
 ```
-Rovo chat (user) ──▶ Agent prompt
+Rovo chat (user) ──▶ Feedback Labeller prompt
                      │
-                     │ calls
+                     │ invokes actions
                      ▼
- Action GET  ──▶  extractFeedbackTable()
-                     │  (reads page via REST v2, ADF)
-                     │  └── returns rows + meta
+Action GET     ──▶  get-next-rows
+                     │  (reads page via REST v2, ADF; returns unlabeled rows)
                      ▼
-      🧠 Atlassian Intelligence classifies rows
+            🧠 LLM classifies Theme & Impact
                      ▼
- Action UPDATE ──▶  applyFeedbackLabels()
-                     │  (adds cols if missing, writes labels, PUT page)
+Action UPDATE  ──▶  apply-labels
+                     │  (adds missing columns; writes labels; PUT page)
                      ▼
-      Confluence page updated, logs stored (storage:app)
+                 Confluence page updated
 ```
 
 ---
 
-#### File list
+#### Files
 
-| File / folder    | Purpose                                                          |
-| ---------------- | ---------------------------------------------------------------- |
-| **manifest.yml** | Rovo agent definition, two action modules, required scopes       |
-| **src/index.js** | Server code – ADF traversal, Confluence REST v2 helpers, logging |
-| **README.md**    | This file                                                        |
+- manifest.yml: Rovo agent, actions, permissions.
+- src/index.js: ADF helpers, Confluence REST v2 helpers, actions.
+- Readme.md: This document.
 
 ---
 
-#### Scopes required
+#### Permissions
 
 ```yaml
 permissions:
@@ -58,78 +56,59 @@ permissions:
     - read:page:confluence   # GET page (atlas_doc_format)
     - write:page:confluence  # PUT page
     - read:chat:rovo         # expose agent & actions in Rovo chat
-    - storage:app            # persistent failure-log records
+    - storage:app            # reserved; not currently used by code
 ```
 
-No `external.fetch` block is needed—only product APIs are used.
+No external.fetch/egress is required.
 
 ---
 
 #### Prerequisites
 
-* Node 22.x (managed by Forge runtime)
-* Forge CLI ≥ 9 (`npm i -g @forge/cli`)
-* A Confluence Cloud site where you have *Admin* rights
-* An Atlassian account with Rovo enabled (beta / GA)
+- Atlassian Forge CLI (latest): `npm i -g @forge/cli`
+- Confluence Cloud site where you can install apps
+- Rovo enabled on your site
 
 ---
 
-#### Setup & deployment
+#### Setup and deployment
 
 ```bash
-# clone or copy the project
-cd feedback-label-agent
-
-# install dependencies (none beyond the Forge runtime)
+# from the repo root
 npm install
-
-# login & register
 forge login
-forge register  # choose Confluence
-
-# lint & deploy
+forge register   # select Confluence
 forge lint
-forge deploy --environment production
+forge deploy -e production
+# if prompted about new scopes
+forge install --upgrade -e production
 ```
 
-> **Runtime limits:** Node 22, memory 128 MB, timeout 25 s.
-
-After deployment the agent **Customer Feedback Classifier** appears in the Rovo sidebar whenever you open a Confluence page. Select it and choose **“Classify feedback on this page”** or **“Label first 20 empty rows.”**
+Usage: On a Confluence page, open Rovo and run “Label the next 20 feedback rows on this page”, or use the content byline “Label next 20 rows”.
 
 ---
 
-#### Configuration knobs
+#### Configuration
 
-| Setting           | Location        | Default   | Notes                                        |
-| ----------------- | --------------- | --------- | -------------------------------------------- |
-| `rowsLimit`       | Action input    | 20        | Pass a smaller number in the chat if needed. |
-| Impact thresholds | Agent prompt    | see above | Edit manifest prompt to change.              |
-| Log retention     | `logCritical()` | unlimited | Add TTL purge if storage quota matters.      |
+- batchSize: Action input for get-next-rows (max 20).
+- Taxonomy: Defined in the agent prompt in manifest.yml.
+- Overwrite behavior: Only fills empty Theme/Impact cells; never overwrites.
 
 ---
 
-#### Logging & troubleshooting
+#### Logging
 
-* Each invocation gets a **correlationId** (`crypto.randomUUID()`), written to the Forge function log and to `@forge/storage`.
-* Failure events: `extract_fail`, `update_fail`, etc.
-* Purge or compress logs periodically if you process thousands of pages.
-
----
-
-#### Extending the app
-
-* **Custom taxonomies** – Adjust `THEME_SET` / `IMPACT_SET` in `index.js` and edit the prompt.
-* **Process more rows** – Raise `ROW_LIMIT_MAX`, mindful of execution time.
-* **Dry‑run mode** – Add an additional action that returns a diff instead of writing.
+- Structured JSON logs are printed to stdout and visible via `forge logs`.
+- No persistent storage is used for logs in the current version.
 
 ---
 
-#### Security notes
+#### Extensibility
 
-* No PII stored; only the feedback text sent to Atlassian Intelligence.
-* The app never overwrites existing data.
-* All calls stay within the Atlassian cloud – no outbound fetch scopes required.
+- To change the taxonomy, edit the prompt in manifest.yml and (optionally) the constants in code.
+- To alter batch size limits, change the `Math.min(..., 20)` logic in `src/index.js`.
 
 ---
 
-*Last updated — 1 Aug 2025*
+Last updated — 4 Sep 2025
+
