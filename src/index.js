@@ -185,13 +185,17 @@ async function getNextRows(payload, context) {
 
   const table = selected.node;
   const rows = (table.content || []).slice(1); // exclude header
+
   const unlabeled = [];
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i];
     const hasTheme = !!cellText(r, header.themeCol);
     const hasImpact = !!cellText(r, header.impactCol);
     if (!hasTheme || !hasImpact) {
-      unlabeled.push({ rowIndex: i, subject: cellText(r, header.subjectCol), description: cellText(r, header.descriptionCol) });
+      const subject = cellText(r, header.subjectCol);
+      const description = cellText(r, header.descriptionCol);
+      // Return only unlabeled rows; the Agent (LLM) will classify
+      unlabeled.push({ rowIndex: i, subject, description });
       if (unlabeled.length >= batchSize) break;
     }
   }
@@ -245,6 +249,9 @@ async function applyLabels(payload, context) {
   const table = selected.node;
   const dataRows = (table.content || []).slice(1);
   let updated = 0;
+
+
+  const ci = (v) => (v || "").toString().trim().toLowerCase();
 
   for (const item of items) {
     const idx = item.rowIndex;
