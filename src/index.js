@@ -153,8 +153,7 @@ async function putPageADF(pageId, title, versionNumber, adf) {
   }
 }
 
-
-// (No direct AI calls from server-side; classification is done by the Agent.)
+// ---------- Normalizers removed: use LLM-provided values as-is ----------
 
 // ---------- Rovo Actions ----------
 async function getNextRows(payload, context) {
@@ -259,16 +258,11 @@ async function applyLabels(payload, context) {
     if (typeof idx !== "number" || idx < 0 || idx >= dataRows.length) continue;
 
     const row = dataRows[idx];
-    // Normalize to strict taxonomy (case-insensitive); skip invalids
-    const themeMatch = THEMES.find((t) => t.toLowerCase() === ci(item.theme));
-    const impactMatch = IMPACTS.find((i) => i.toLowerCase() === ci(item.impact));
-    if (!themeMatch || !impactMatch) {
-      log("WARN", "Skipping row due to invalid taxonomy", { rowIndex: idx, theme: item.theme, impact: item.impact });
-      continue;
-    }
+    const theme = item.theme;
+    const impact = item.impact;
 
-    if (!cellText(row, header.themeCol)) { setCellText(row, header.themeCol, themeMatch); updated++; }
-    if (!cellText(row, header.impactCol)) { setCellText(row, header.impactCol, impactMatch); updated++; }
+    if (!cellText(row, header.themeCol)) { setCellText(row, header.themeCol, theme); updated++; }
+    if (!cellText(row, header.impactCol)) { setCellText(row, header.impactCol, impact); updated++; }
   }
 
   setAtPath(adf, selected.path, table);
